@@ -1,0 +1,346 @@
+Exercise 3.2 - AWS IoT Greengrass
+In Exercise 1.1, your Car Things were connecting directly with AWS IoT. What if those Car Things were only able to communicate on a closed network? What if you didn't need to send all of that telemetry data to AWS and would prefer to do some processing locally in your network and only send pieces of the data to AWS? The service that would help with this and much more is AWS IoT Greengrass.
+
+You will use a similar scenario as Exercise 1.1, but instead of having both Car Things send their data to AWS IoT Core, they will send their data to Greengrass Core. The devices will communicate the same way using the MQTT protocol using Certificates, but the endpoint for the connection and the Certificate Authority (CA) will be the endpoint of Greengrass Core running in your Cloud9 environment and its Certificate Authority.
+
+Although in this case, Greengrass Core will be running in the same server as Car1 and Car2, they would normally be separate. For the devices to know how to connect to Greengrass Core within the network, you can use the Greengrass Discovery API which will return all the different connectivity options (IP and Port) of your Greengrass Core.
+
+To do processing of the data, you will use a Lambda function that you will deploy on your Greengrass Core. That's right, Lambda will be running on your server (your Cloud9 environment). In this case, the Lambda function will simply take the data that is sent by each of the devices (on the edx/telemetry Topic) and re-publish it to a different IoT Topic: edx/greengrass/telemetry.
+
+You will configure Subscriptions within your Greengrass Core to manage how the data is flowing. By default, there is no data that can go anywhere, even between the devices connected on your Greengrass Core. To allow that, Subscriptions are made to say what the data flow should be. In this case, you will configure that all the telemetry data sent by the Cars should be sent to your Lambda function running on Greengrass Core and that the data re-published by that Lambda function should be sent to the AWS IoT Cloud.
+
+Finally, you will be able to subscribe to the IoT Topic that your Lambda function is publishing to (edx/greengrass/telemetry) using the AWS IoT MQTT Client in the AWS Management Console to validate the flow of the data.
+
+The diagram below shows the resources and data flow that you will create in this exercise.
+
+
+This exercise assumes that the resources from Exercise 1.1 haven't been deleted. If you have deleted those components, you will need to start with Exercise 1.1 again before continuing.
+
+1. Create Greengrass Group
+In this section, you will create a Greengrass Group. When doing so, you will use a wizard that will create all of the different resources required to make that Greengrass Group work: Core, Certificate and Key Pairs and Policy.
+
+1.1 Create Greengrass Group, Core, Certificate and Policy
+In the AWS Management Console, click Services, and then click IoT Greengrass to go to the IoT Greengrass console. It is in the same console as IoT Core.
+Make sure you are in the same Region as the one you used in Exercise 1.1. It should be Ireland, N. Virginia, Oregon or Tokyo. You can validate that by going to the Cloud9 service and looking for the IoTOnAWS environment. If you don't see it, you aren't in the right region.
+Click Create a Group.
+Click Use easy creation to automatically create a Greengrass Group, an IAM Role for Greengrass to access Lambda and other services, a Greengrass Core and a Certificate and key pair for the Core. Any of the two buttons named Use easy creation works.
+In the Group Name field, enter edXIoTGGGroup.
+Click Next.
+In the Name field, enter edXIoTGGGroupCore.
+Click Next.
+In the next screen, you will see the list of actions that this easy creation wizard will create. It first creates the Group. The Greengrass Group requires a Core. This Core is similar to an IoT Thing. In fact, it will be listed in the Things list. Similar to a Thing, the Core requires a Certificate, a Private Key and a Public Key. For the Authorization piece, the Certificate will require a Policy. All of those are created for you.
+Click Create Group and Core.
+Click Download these resources as a tar.gz and save the file to your computer.
+Click Finish.
+Click Cores. You can see that the edXIoTGGGroupCore Core is associated to this Group.
+Click the left arrow button on the top left of the page.
+Click Manage. You can see that a new Thing has been created called edXIoTGGGroupCore.
+Click edXIoTGGGroupCore.
+Click Security. You can see that a Certificate is associated to this Thing.
+Click on the certificate.
+Click Policies. You can see that an IoT Policy is associated to this Certificate.
+Click on the edXIoTGGGroupCore-... policy. You can see the IoT Policy that was automatically created.
+Click on the Things link in the breadcrumbs near the top of the page to go back to the IoT Console.
+You now have an Greengrass Group and a Core ready to be connected to.
+
+2. Setup Greengrass Core on Cloud9 and start it
+In this section, you will configure a few settings on the Cloud9 environment to be ready to install Greengrass. Those settings are a user and a group under which Lambda will run, hardlink and softlink protection and mounting Linux control groups.
+
+You will then install Greengrass by downloading it from source and extracting it in the root (/). You will also extract all of the files from the archive that you downloaded in the previous section.
+
+Finally, you will start Greengrass.
+
+2.1 Start Cloud9
+Your Cloud9 environment may have shut down at this point as it's supposed to automatically shutdown after 30 minutes. To restart it, follow these steps:
+
+In the AWS Management Console, click Services, and then click Cloud9 to go to the Cloud9 console.
+You should see a list of environments. If you don't, click on the hamburger menu icon (the three parallel lines) near the top left of the screen and click on Your environments.
+Click the Open IDE button in the IoTOnAWS card.
+It may take a minute for your environment to start.
+2.2 Setup Cloud9 for Greengrass
+Add the user ggc_user and ggc_group to the Cloud9 instance under which the Lambda functions running in Greengrass will run under. In the Cloud9 terminal enter the following commands:
+
+sudo adduser --system ggc_user
+sudo groupadd --system ggc_group
+Copy to clipboard
+Greengrass requires that the security on the instance be improved by enabling hardlink and softlink protection on the operating system. In the Cloud9 terminal enter the following commands:
+
+echo 'fs.protected_hardlinks = 1' | sudo tee -a /etc/sysctl.d/00-defaults.conf
+echo 'fs.protected_symlinks = 1' | sudo tee -a /etc/sysctl.d/00-defaults.conf
+sudo sysctl --system
+Copy to clipboard
+Extract and run the following script to mount Linux control groups (cgroups). This is an AWS IoT Greengrass dependency. In the Cloud9 terminal enter the following commands:
+
+cd /tmp
+curl https://raw.githubusercontent.com/tianon/cgroupfs-mount/951c38ee8d802330454bdede20d85ec1c0f8d312/cgroupfs-mount > cgroupfs-mount.sh
+chmod +x cgroupfs-mount.sh 
+sudo bash ./cgroupfs-mount.sh
+Copy to clipboard
+2.3 Install Greengrass
+Download Greengrass and extract it. In the Cloud9 terminal enter the following commands:
+
+cd /tmp
+wget https://d1onfpft10uf5o.cloudfront.net/greengrass-core/downloads/1.8.0/greengrass-linux-x86-64-1.8.0.tar.gz
+sudo tar -xzf greengrass-linux-x86-64-1.8.0.tar.gz -C /
+Copy to clipboard
+2.4 Upload and extract your Greengrass Group configuration
+Upload the ...-setup.tar.gz file that you downloaded in section 1.
+
+Click on the folder IoTOnAWS in the directory tree on the left in Cloud9.
+Click File > Upload Local Files....
+Click Select files.
+Select the ...-setup.tar.gz.
+Click on the x icon to close the Upload Files window.
+Extract the ...-setup.tar.gz archive. This will place the Certificate and Private Key of your Core in the /greengrass/certs folder. It will also place the config.json file containing all the information to connect to the AWS IoT Thing Core you created earlier in the /greengrass/config folder. In the Cloud9 terminal enter the following commands:
+
+cd /tmp
+mv ~/environment/*-setup.tar.gz setup.tar.gz
+sudo tar -xzf setup.tar.gz -C /greengrass
+Copy to clipboard
+Place the AWS IoT Root Certificate Authority in the /greengrass/certs folder. In the Cloud9 terminal enter the following commands:
+
+cd /greengrass/certs/
+sudo wget -O root.ca.pem https://www.amazontrust.com/repository/AmazonRootCA1.pem
+Copy to clipboard
+2.5 Start Greengrass
+Start Greengrass by executing the following commands in the Cloud9 terminal:
+
+cd /greengrass/ggc/core/
+sudo ./greengrassd start
+Copy to clipboard
+You should see the following output:
+
+Setting up greengrass daemon
+Validating hardlink/softlink protection
+Waiting for up to 40s for Daemon to start
+
+Greengrass successfully started with PID: .....
+You have successfully setup Greengrass on your Cloud9 instance and connected it to AWS IoT Greengrass.
+
+3. Create the Greengrass Lambda function
+In this section, you will create a Lambda function. When creating a Lambda function, the Lambda service requires a Role to be passed. However, as this function will run on the Greengrass Core, this Role will never be used so you will use the default Role creation from Lambda. Greengrass can only use an alias or a publish version of your Lambda function (immutable versions). As the last step, you will publish your Lambda function.
+
+This function has been developed in Python. It could have been developed in Java 8, NodeJS 6.10 or C/C++ as well.
+
+In the AWS Management Console, click Services, and then click Lambda to go to the Lambda console.
+Click Create a function.
+For Function name, enter edXIoTGreengrassLambda.
+For Runtime, select Python 2.7.
+Expand Choose or create an execution role under Permissions.
+In the dropdown, select Create a new role from AWS policy templates.
+For Role name, enter edXIoTGGLambdaRole. Leave the Policy templates empty as you are creating a Role with no specific permissions other than logging.
+Click Create function.
+Download the code of the Lambda function to your computer by clicking here.
+In the Function code section, under Code entry type, click on the dropdown currently set to Edit code inline and select Upload a .zip file.
+Click Upload and select the exercise-3.2-greengrassLambda-python.zip you just downloaded.
+Click Save at the top right of the page.
+The code will be uploaded and Lambda will show the code in the browser. Feel free to review the code. In summary, it ensures that the data is coming from car1 or car2. It then publishes using the Greengrass IoT client the same data that was received on the edx/greengrass/telemetry IoT Topic.
+Click Actions > Publish new version.
+Click Publish.
+4. Add Cars, Lambda and Subscriptions to Greengrass and Deploy
+In this section, you will add the 2 Car Things from Exercise 1.1 to your Greengrass Group. You will also associate the Lambda function you created to your Greengrass Group so it can be deployed to the Greengrass Core in Cloud9.
+
+You will then create 3 Subscriptions to allow the data sent from the cars to be sent to Lambda. As well as for data sent by Lambda to be sent to AWS IoT Cloud.
+
+car1 data sent on the edx/telemetry IoT Topic is sent to the Lambda function
+car2 data sent on the edx/telemetry IoT Topic is sent to the Lambda function
+Lambda data sent on the edx/greengrass/telemetry IoT Topic is sent to AWS IoT Cloud
+Finally, you will deploy the Greengrass configuration to your Greengrass Core running in Cloud9.
+
+4.1 Cars
+In the AWS Management Console, click Services, and then click IoT Greengrass to go to the IoT Greengrass console.
+Click Groups in the left menu.
+Click the edXIoTGGGroup card.
+Click Devices.
+Click Add Device.
+Click Select an IoT Thing.
+Click the radio button next to car1.
+Click Finish. The car1 Thing has now been added.
+Click Add Device.
+Click Select an IoT Thing.
+Click the radio button next to car2.
+Click Finish. The car2 Thing has now been added.
+4.2 Lambda
+Click Lambdas.
+Click Add Lambda.
+Click Use existing Lambda.
+Click the radio button next to edXIoTGreengrassLambda.
+Click Next.
+Click the radio button next to Version 1.
+Click Finish.
+4.3 Subscriptions
+In this section, you will configure the subscriptions for the data flow between car1, car2, Lambda and AWS IoT Cloud.
+
+4.3.1 car1 to Lambda
+You will add the Subscription from car1 to Lambda for the edx/telemetry Topic.
+
+Click Subscriptions.
+Click Add Subscription.
+Under Select a source, click Select.
+Click Devices.
+Click car1.
+Under Select a target, click Select.
+Click Lambdas.
+Click edXIoTGreengrassLambda.
+Click Next.
+For Topic filter, enter edx/telemetry.
+Click Next.
+Click Finish.
+4.3.2 car2 to Lambda
+You will add the Subscription from car2 to Lambda for the edx/telemetry Topic.
+
+Click Add Subscription.
+Under Select a source, click Select.
+Click Devices.
+Click car2.
+Under Select a target, click Select.
+Click Lambdas.
+Click edXIoTGreengrassLambda.
+Click Next.
+For Topic filter, enter edx/telemetry.
+Click Next.
+Click Finish.
+4.3.3 Lambda to AWS IoT Cloud
+You will add the Subscription from Lambda to AWS IoT for the edx/greengrass/telemetry Topic.
+
+Click Add Subscription.
+Under Select a source, click Select.
+Click Lambdas.
+Click edXIoTGreengrassLambda.
+Under Select a target, click Select.
+Click IoT Cloud.
+Click Next.
+For Topic filter, enter edx/greengrass/telemetry.
+Click Next.
+Click Finish.
+4.4 Deploy the configuration to Greengrass Core
+Click Actions > Deploy.
+Click Automatic detection.
+If this is the first time you deploy Greengrass, you will be prompted to grant permissions to create a service-level role that will allow Greengrass to access different AWS services in your account. In this case, Greengrass will require access to AWS IoT and Lambda for the deployment. Click Grant permission.
+Click Deployments.
+Under the name of the group edXIoTGGGroup, you will see the status of the deployment. You may see a message of Failed : GreenGrass is not authorized to assume the Service Role associated with this acco.... As this is your first deployment, there may have been a race condition where the Role wasn't finished to be configured before Greengrass tried to use it. Try to deploy again after 30 seconds. Click Actions > Deploy.
+Under the name of the group edXIoTGGGroup, you should see a green light with the message Successfully completed.
+Your Greengrass Core on Cloud9 has now been updated with all the configuration settings you have set. It's time to use it.
+
+5. Download car code, Start the cars and Subscribe to edx/greengrass/telemetry topic
+In this section, you will download the code that connects to Greengrass. The code isn't that different from Exercise 1.1 other than it needs to query the Greengrass Discovery API to know how to connect to Greengrass and loop through all the connectivity options returned and try to connect to each of them until one works. Then, it's the same as Exercise 1.1 where the code uses MQTT to send telemetry data on the edx/telemetry IoT Topic.
+
+You will then start both cars which will use the same Certificate and Key used in Exercise 1.1 to communicate to Greengrass. The Certificate Authority certificate for connecting to Greengrass Core will be downloaded by using the Greengrass Discovery API.
+
+Finally, you will use the AWS IoT MQTT Client in the AWS Management Console to subscribe to the edx/greengrass/telemetry to validate that data is flowing from the cars, to Lambda and into AWS IoT Cloud.
+
+5.1 Download the car code
+Download the code by running the following commands in the Cloud9 terminal.
+
+cd ~/environment
+wget https://s3.amazonaws.com/awsu-hosting/OTP-AWS_D5-2019/code/exercise-3.2.js
+cp exercise-3.2.js car1/
+cp exercise-3.2.js car2/
+rm exercise-3.2.js
+Copy to clipboard
+5.2 Start the cars
+If you don't have 2 Cloud9 terminal. click the circled + icon that is next to your current terminal and select New Terminal. You now have 2 different terminals.
+In the left terminal, execute the following commands to start the code for car1.
+
+cd ~/environment/car1
+node exercise-3.2.js
+Copy to clipboard
+You should see the following:
+
+Data received from Greengrass Discovery API:
+{
+    ...
+}
+Trying to connect to Greengrass Core with the address 127.0.0.1 and port 8883
+Connected to Greengrass Core
+Sending car telemetry data to AWS IoT for car1
+Sending car telemetry data to AWS IoT for car1
+...
+Look at the JSON payload returned by the Greengrass Discovery API. You will see all the different Connectivity options (HostAddress and PortNumber) that the Greengrass Core running in Cloud9 can be reached at. You can also see the Certificate Authority certificate for your Greengrass Core.
+In the right terminal, execute the following commands to start the code for car2.
+
+cd ~/environment/car2
+node exercise-3.2.js
+Copy to clipboard
+You should see the following:
+
+Data received from Greengrass Discovery API:
+{
+    ...
+}
+Trying to connect to Greengrass Core with the address 127.0.0.1 and port 8883
+Connected to Greengrass Core
+Sending car telemetry data to AWS IoT for car2
+Sending car telemetry data to AWS IoT for car2
+...
+5.3 Subscribe to edx/greengrass/telemetry topic
+In the AWS Management Console, click Services, and then click IoT Core to go to the IoT Core console.
+Click Test in the left menu to start the AWS IoT MQTT Client.
+In the Subscribe topic field, enter edx/greengrass/telemetry.
+Click Subscribe to topic.
+You should see the telemetry data sent by each car every 5 seconds. Car1 and Car2 are connecting to Greengrass which runs a Lambda function that parses the data and sends it back to AWS IoT Cloud as you can see it here.
+
+6. Delete the resources created in this exercise
+While there are no connections nor data being transmitted to the IoT service including IoT Greengrass, there will not be any charge for this exercise for that service.
+
+The Lambda function isn't being executed, thus there will not be any charge for that service.
+
+Exercise 4.1 will use the resources created as part of this exercise. The recommendation is to keep these resources for that exercise and to let Cloud9 stop by itself after 30 minutes of inactivity so you can keep the environment. If you decide not to keep some of those resources, you will have to do both this exercise and Exercise 1.1 again before you can do Exercise 4.1.
+
+The resources from Exercise 1.1 will still be there and should remain in place. If you would like to remove the resources from Exercise 1.1, refer to that exercise.
+
+If you would prefer to remove all the resources of this exercise (not recommended). Follow the steps hidden below:
+
+Expand for instructions on how to delete all your resources (not recommended).
+1 Delete the Greengrass Certificate
+In the AWS Management Console, click Services, and then click IoT Core to go to the IoT Core console.
+Click Secure in the left menu.
+In the Search certificates field, enter edXIoTGGGroupCore. Only one certificate will show, click on the 3 dots of the card and click Delete. Click Yes, continue with delete.
+3 Delete IoT Policy
+In the AWS Management Console, click Services, and then click IoT Core to go to the IoT Core console.
+Click Secure in the left menu.
+Click Policies.
+In the Search policies field, enter edXIoTGGGroupCore-policy. Only one policy will show, click on the 3 dots of the card and click Delete. Click Yes, continue with delete.
+4 Delete IoT Thing
+In the AWS Management Console, click Services, and then click IoT Core to go to the IoT Core console.
+Click Manage.
+Click on the 3 dots on the edXIoTGGGroupCore card and click Delete. Click Yes, continue with delete.
+5 Delete Greengrass Group
+In the AWS Management Console, click Services, and then click IoT Greengrass to go to the IoT Greengrass console.
+Click Groups in the left menu.
+Click on the edXIoTGGGroup card.
+Click Actions > Reset Deployments.
+Click Actions > Delete Group.
+Click Yes, continue with delete.
+6 Delete the Greengrass Lambda function
+In the AWS Management Console, click Services, and then click Lambda to go to the Lambda console.
+Click the radio button next to edXIoTGreengrassLambda.
+Click Actions > Delete.
+Click Delete.
+7 Delete Greengrass Lambda IAM Role
+In the AWS Management Console, click Services, and then click IAM to go to the IAM console.
+Click Roles in the left menu.
+In the Search field, enter edXIoTGGLambdaRole.
+Select edXIoTGGLambdaRole and click Delete role.
+Click Yes, delete.
+6.1 Stop the cars
+Press Ctrl-c in each of the Cloud9 terminal to stop them from interacting with AWS IoT.
+6.2 Stop the MQTT Client
+Navigate away from the AWS IoT MQTT Client page to disconnect from the client.
+6.3 Stop Greengrass
+In the Cloud9 terminal, enter the following commands:
+
+cd /greengrass/ggc/core/
+sudo ./greengrassd stop
+Copy to clipboard
+6.4 Stop the Cloud9 environment
+The Cloud9 environment will automatically shut down after 30 minutes of inactivity. For your Cloud9 environment to be considered inactive, you need to close the browser tab. All of the settings will be saved.
+
+Close the browser tab where your environment was running.
+As the operating system is Amazon Linux, you are billed by the second during those 30 minutes of inactivity. If you are under the free tier, this would be covered. If you are no longer under the free tier, you can force a stop of the EC2 instance that runs your Cloud9 environment. This will have no effect on the future exercises.
+
+In the AWS Management Console, click Services, and then click EC2 to open the EC2 console.
+Click Instances in the left menu.
+Select the EC2 Instance that has a name that starts with aws-cloud9.
+Click Actions > Instance State > Stop
+Congratulations! You have successfully completed this exercise. You can now move on to the next step.

@@ -1,0 +1,265 @@
+Exercise 4.1 - Use IoT Analytics to Enhance and Look at the Data
+In this exercise, you will use the AWS IoT Analytics service to visualize the data sent by the cars.
+
+To do so, you will create a Data store, a Channel and a Pipeline. You will create an IoT Rule with the following query statement: SELECT FROM 'edx/greengrass/telemetry'. You will instruct this Rule that selects everything from the edx/greengrass/telemetry* IoT Topic to send the data to the Channel. So the data will be first sent into the Channel, the Pipeline will process the data and store it in the Data store.
+
+One of the requirement from your Data Analysts is that they would also like to get the weather information and the ZIP Code from the location of the cars. Instead of doing a code modification to the cars, you have decided to do that using IoT Analytics.
+
+To solve that requirement, you will create a Lambda function that takes the data as an input and adds that information. You will then modify the Pipeline to add the Lambda function as a step to execute with the streaming data.
+
+To validate that the enrichment is there, you will create a Data set to analyze the streamed data using a SQL query.
+
+Finally, you will act as the Data Analyst to execute different queries on the telemetry data.
+
+The diagram below shows the resources and data flow that you will create in this exercise.
+
+
+This exercise assumes that the resources from Exercise 1.1 and 3.2 haven't been deleted. If you have deleted those resources, you will need to start with Exercise 1.1 and then Exercise 3.2 before continuing.
+
+1. Create the Lambda function for enrichment
+In this section, you will create the Lambda function to enrich the data that will be used by the IoT Analytics Pipeline later in this exercise.
+
+1.1 Create the Lambda function
+In the AWS Management Console, click Services, and then click Lambda to go to the Lambda console.
+Make sure you are in the same Region as the one you used in Exercise 1.1. It should be Ireland, N. Virginia, Oregon or Tokyo. You can validate that by going to the Cloud9 service and looking for the IoTOnAWS environment. If you don't see it, you aren't in the right region.
+Click Create function.
+For Function name, enter edXIoTAnalyticsLambda.
+For Runtime, select Node.js 8.10.
+Expand Choose or create an execution role under Permissions.
+In the dropdown, select Create a new role from AWS policy templates.
+For Role name, enter edXIoTAnalyticsLambdaRole. Leave the Policy templates empty as you are creating a Role with no specific permissions other than logging.
+Click Create function.
+Download the code of the Lambda function to your computer by clicking here.
+In the Function code section, under Code entry type, click on the dropdown currently set to Edit code inline and select Upload a .zip file.
+Click Upload and select the exercise-4.1-lambda.zip you just downloaded.
+Scroll down to the Basic settings section, under Timeout, input 30 sec.
+Click Save at the top right of the page.
+The code will be uploaded and Lambda will show the code in the browser. Feel free to review the code. In summary, it uses a library to get the ZIP Code from the longitude and latitude and uses that ZIP Code to get the weather for that location. It then adds the data into the input payload and sends it back.
+1.2 Start Cloud9
+Your Cloud9 environment may have shut down at this point as it's supposed to automatically shutdown after 30 minutes. To restart it, follow these steps:
+
+In the AWS Management Console, click Services, and then click Cloud9 to go to the Cloud9 console.
+You should see a list of environments. If you don't, click on the hamburger menu icon (the three parallel lines) near the top left of the screen and click on Your environments.
+Click the Open IDE button in the IoTOnAWS card.
+It may take a minute for your environment to start.
+1.3 Set Function Policy for IoT Analytics
+In the Cloud9 terminal use the following command to allow IoT Analytics to invoke your Lambda function.
+
+aws lambda add-permission --function-name edXIoTAnalyticsLambda --statement-id iot --principal iotanalytics.amazonaws.com --action lambda:InvokeFunction
+Copy to clipboard
+You should see an output similar to:
+
+{
+    "Statement": "{\"Sid\":\"iot\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"iotanalytics.amazonaws.com\"},\"Action\":\"lambda:InvokeFunction\",\"Resource\":\"arn:aws:lambda:us-east-1:123456789012:function:edXIoTAnalyticsLambda\"}"
+}
+2. Start Greengrass and the cars
+Data needs to flow into IoT Core to make it easier on the creation of the different elements in the next section. You will start you Greengrass Core first and the car right after.
+
+2.1 Start Greengrass
+Start Greengrass by executing the following commands in the Cloud9 terminal:
+
+cd /greengrass/ggc/core/
+sudo ./greengrassd start
+Copy to clipboard
+2.2 Start the cars
+If you don't have 2 Cloud9 terminal. click the circled + icon that is next to your current terminal and select New Terminal. You now have 2 different terminals.
+In the left terminal, execute the following commands to start the code for car1.
+
+cd ~/environment/car1
+node exercise-3.2.js
+Copy to clipboard
+In the right terminal, execute the following commands to start the code for car2.
+
+cd ~/environment/car2
+node exercise-3.2.js
+Copy to clipboard
+3. Create the stream Analytics Pipeline
+3.1 Create the Channel
+This channel will receive the data from IoT Core.
+
+In the AWS Management Console, click Services, and then click IoT Analytics to go to the IoT Analytics console.
+Click Prepare in the left menu.
+Click Create a channel.
+Under Channel ID, enter edXIoTChannel.
+Click Next.
+Under IoT Core topic filter, enter edx/greengrass/telemetry. This will automatically create an IoT Rule with the action to send the data it finds with the query statement SELECT FROM 'edx/greengrass/telemetry'* to the edXIoTChannel.
+Under IAM role name, click Create new.
+Under Name, enter edXIoTAnalyticsRole.
+Click Create role.
+Click Create Channel.
+3.2 Create the Data store
+The Data store will store the data received by the Pipeline once it's processed.
+
+Click Data stores in the left menu.
+Click Create a data store.
+Under ID, enter edXIoTDatastore.
+Click Create data store.
+3.3 Create the Pipeline
+The Pipeline will take the data arriving in the Channel, process it and send it into the Data store. Although, the Pipeline won't do much processing as of yet.
+
+Click Pipelines in the left menu.
+Click Create a pipeline.
+Under Pipeline ID, enter edXIoTPipeline.
+Under Pipeline source, click the Edit link and select edxiotchannel.
+Click Next. In the next page, you will see a list of attributes that were found from the data that the cars are currently sending.
+Click Next in the Set attributes of your messages page.
+In the Enrich, transform, and filter messages, click the Add activity link.
+Click Transform message with Lambda function.
+Under Lambda function, select edXIoTAnalyticsLambda.
+Click Update preview. You will see the same attributes as earlier, but 2 more have been added: weather and zipcode.
+Click Next.
+Under Pipeline output, click Edit and select edxiotdatastore.
+Click Create pipeline.
+4. Create your first Data set and look at results
+In this section, you will first create an initial IoT Analytics Data set with a SQL Query that will select everything in the data store. Then, you will run the query to see the results.
+
+4.1 Create the initial AWS IoT Analytics Data set
+In the AWS Management Console, click Services, and then click IoT Analytics to go to the IoT Analytics console.
+Click Analyze in the left menu.
+Click Create a data set.
+Click Create SQL to create a SQL Data Set so you can issue SQL Queries.
+Under ID, enter edXIoTDataset.
+Under Select data store source, click Edit and select edxiotdatastore.
+Click Next.
+Leave the SQL Query to SELECT FROM edxiotdatastore* to show all of the data and click Next.
+Click Next under the Configure data selection filter page.
+Click Next under the Set query schedule page.
+In the years and days fields, enter 0 and 1 respectively. It should read: For 0 year(s) and 1 day(s).
+Click Create data set.
+4.2 Run the AWS IoT Analytics Data set
+Click the edxiotdataset link.
+Click Actions > Run now.
+Under the edxiotdataset title, you will see the word CREATING. It will take a few minutes for it to become SUCCEEDED. You will see some data in the Result preview. You can find the weather and zipcode attributes that were added via the Pipeline that uses Lambda.
+Click Content.
+You should see a green light with the word Succeeded next to the only query you ran so far. You can also download the csv file by clicking on the Download link.
+5. Analyze Time Series data with IoT Analytics
+In this section, you will act as a Data Analyst to issue other SQL queries to find information about the data.
+
+5.1 Look at the mean speed of cars that exceeds the limit in a specific location and weather
+Click the Details in the edxiotdataset left menu.
+Click Edit next to SQL query.
+Replace the content of the Query with
+
+SELECT device, weather, engine_speed_mean, zipcode FROM edxiotdatastore WHERE engine_speed_mean > 60
+Copy to clipboard
+Click Save.
+Click Actions > Run now.
+Wait for the query to succeed. The status is visible under the edxiotdataset title. It will go from CREATING to SUCCEEDED. You will see the result in the Result preview section.
+
+5.2 Lookup the number of trips per vehicle.
+Click the Details in the edxiotdataset left menu.
+Click Edit next to SQL query.
+Replace the content of the Query with
+
+SELECT device, count(*) AS count FROM edxiotdatastore GROUP BY device
+Copy to clipboard
+Click Save.
+Click Actions > Run now.
+Wait for the query to succeed and you will see the result in the Result preview section.
+
+Feel free to try other SQL statements.
+
+6. Delete the resources created in this exercise
+In this section, you will remove all the different resources created as part of this exercise.
+
+6.1 Stop the cars
+Press Ctrl-c in each of the Cloud9 terminal to stop them from interacting with AWS IoT.
+6.2 Stop Greengrass
+In the Cloud9 terminal, enter the following commands:
+
+cd /greengrass/ggc/core/
+sudo ./greengrassd stop
+Copy to clipboard
+6.3 Delete the Data set, Pipeline, Data store and Channel
+In the AWS Management Console, click Services, and then click IoT Analytics to go to the IoT Analytics console.
+Click Analyze in the left menu.
+Click the 3 dots on the right of edxiotdataset, click Delete and click Yes, Continue with delete.
+Click Prepare in the left menu.
+Click Pipelines.
+Click the 3 dots on the right of edxiotpipeline, click Delete and click Yes, Continue with delete.
+Click Data stores.
+Click the 3 dots on the right of edxiotdatastore, click Delete and click Yes, Continue with delete.
+Click Channels.
+Click the 3 dots on the right of edxiotchannel, click Delete and click Yes, Continue with delete.
+6.4 Delete IoT Rule
+In the AWS Management Console, click Services, and then click IoT Core to go to the IoT Core console.
+Click Act in the left menu.
+Click the 3 dots on the card of IoTAnalytics_edXIoTC..., click Delete and click Yes, Continue with delete.
+6.5 Delete the Lambda function
+In the AWS Management Console, click Services, and then click Lambda to go to the Lambda console.
+Click the radio button next to edXIoTAnalyticsLambda.
+Click Actions > Delete.
+Click Delete.
+6.6 Delete the IAM Roles
+In the AWS Management Console, click Services, and then click IAM to go to the IAM console.
+Click Roles in the left menu.
+In the Search field, enter edXIoTAnalytics.
+Select both edXIoTAnalyticsLambdaRole and edXIoTAnalyticsRole and click Delete role.
+Click Yes, delete.
+6.7 Delete the IoT Analytics IAM Policy
+In the AWS Management Console, click Services, and then click IAM to go to the IAM console.
+Click Policies in the left menu.
+In the Search field, enter IotConsole_IotAnalyticsBatchPutMessage.
+Select IotConsole_IotAnalyticsBatchPutMessage-....
+Click Policy actions > Delete.
+Click Delete.
+7. Delete the resources created in Exercise 1.1 and 3.2
+Resources were left from Exercise 1.1 and 3.2 as they were required for this exercise. When you are ready to remove those exercises if you will not be doing any of the other exercises again, follow the steps below.
+
+7.1 Delete the Cloud9 Environment
+In the AWS Management Console, click Services, and then click Cloud9 to go to the Cloud9 console.
+Click on the link for IoTonAWS.
+Click Delete.
+In the field, enter Delete
+Click Delete.
+7.2 Delete the Greengrass, Car 1 and Car 2 Certificate
+In the AWS Management Console, click Services, and then click IoT Core to go to the IoT Core console.
+Click Secure in the left menu.
+In the Search certificates field, enter edXIoTGGGroupCore. Only one certificate will show, click on the 3 dots of the card and click Delete. Click Yes, continue with delete.
+In the Search certificates field, enter car1. Only one certificate will show, click on the 3 dots of the card and click Delete. Click Yes, continue with delete.
+In the Search certificates field, enter car2. Only one certificate will show, click on the 3 dots of the card and click Delete. Click Yes, continue with delete.
+7.3 Delete IoT Policies
+In the AWS Management Console, click Services, and then click IoT Core to go to the IoT Core console.
+Click Secure in the left menu.
+Click Policies.
+In the Search policies field, enter edXPolicy. Only one policy will show, click on the 3 dots of the card and click Delete. Click Yes, continue with delete.
+In the Search policies field, enter edXIoTGGGroupCore-policy. Only one policy will show, click on the 3 dots of the card and click Delete. Click Yes, continue with delete.
+7.4 Delete IoT Things
+In the AWS Management Console, click Services, and then click IoT Core to go to the IoT Core console.
+Click Manage.
+Click on the 3 dots on the car1 card and click Delete. Click Yes, continue with delete.
+Click on the 3 dots on the car2 card and click Delete. Click Yes, continue with delete.
+Click on the 3 dots on the edXIoTGGGroupCore card and click Delete. Click Yes, continue with delete.
+7.5 Delete Greengrass Group
+In the AWS Management Console, click Services, and then click IoT Greengrass to go to the IoT Greengrass console.
+Click Groups in the left menu.
+Click on the edXIoTGGGroup card.
+Click Actions > Reset Deployments.
+Click Actions > Delete Group.
+Click Yes, continue with delete.
+7.6 Delete the Greengrass Lambda function
+In the AWS Management Console, click Services, and then click Lambda to go to the Lambda console.
+Click the radio button next to edXIoTGreengrassLambda.
+Click Actions > Delete.
+Click Delete.
+7.7 Delete Greengrass Lambda IAM Role
+In the AWS Management Console, click Services, and then click IAM to go to the IAM console.
+Click Roles in the left menu.
+In the Search field, enter edXIoTGGLambdaRole.
+Select edXIoTGGLambdaRole and click Delete role.
+Click Yes, delete.
+7.8 Delete User and Policy
+The IAM User edxIoTUser and IAM Policy edXIoTPolicy can now be deleted. You will need to use a different account to do that. You can use the same account that you used to create those resources in the first place.
+
+In the AWS Management Console, click Services, and then click IAM to go to the IAM console.
+Click Users in the left menu.
+Select edxIoTUser.
+Click Delete user.
+Click the check box for One or more of these users have recently accessed AWS. Deleting them could affect running systems. Check the box to confirm that you want to delete these users.
+Click Yes, delete.
+Click Policies in the left menu.
+In the Search field, enter edXIoTPolicy.
+Select edXIoTPolicy.
+Click Policy actions > Delete.
+Click Delete.
+Congratulations! You have successfully completed this exercise. You can now move on to the next step.
